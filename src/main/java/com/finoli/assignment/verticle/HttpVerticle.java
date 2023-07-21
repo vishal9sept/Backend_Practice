@@ -37,6 +37,9 @@ public class HttpVerticle extends AbstractVerticle {
         router.post("/api/address").handler(BodyHandler.create())
                 .handler(routingContext -> myEventBus(routingContext, eventBus, "postAddress"));
 
+        router.post("/api/userWithAdd").handler(BodyHandler.create())
+                .handler(routingContext -> myEventBus(routingContext, eventBus, "postUserWithAddress"));
+
         // starting the server
         server.requestHandler(router).listen(8888, asyncResult -> {
             if (asyncResult.succeeded())

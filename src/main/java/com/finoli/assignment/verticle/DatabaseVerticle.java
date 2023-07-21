@@ -1,4 +1,3 @@
-//-------------------------------------------------using promise and future----------------------------------------------
 package com.finoli.assignment.verticle;
 
 import java.time.LocalDateTime;
@@ -17,6 +16,7 @@ import io.vertx.pgclient.PgPool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 
 public class DatabaseVerticle extends AbstractVerticle {
@@ -77,6 +77,9 @@ public class DatabaseVerticle extends AbstractVerticle {
                     break;
                 case "getAddress":
                     getAddressByUser(message);
+                    break;
+                case "postUserWithAddress":
+                    createUserWithAddress(message);
                     break;
             }
         }
@@ -344,7 +347,7 @@ public class DatabaseVerticle extends AbstractVerticle {
 
     }
 
-    // POst For Address
+    // Post For Address
     public <T> Future<JsonObject> postAddress(Message<T> message) {
 
         System.out.println("Inside address : " + message.body().toString());
@@ -384,11 +387,6 @@ public class DatabaseVerticle extends AbstractVerticle {
 
     }
 
-    // Get For Address
-    /**
-     * @param <T>
-     * @param message
-     */
     public <T> void getAddressByUser(Message<T> message) {
 
         System.out.println("Inside GetAddress Method ");
@@ -448,4 +446,116 @@ public class DatabaseVerticle extends AbstractVerticle {
         });
 
     }
+
+    // -----------------------------------------------------------------------------------------
+
+    public <T> Future<JsonObject> createUserWithAddress(Message<T> message) {
+        Promise<JsonObject> promise = Promise.promise();
+
+        JsonObject input = (JsonObject) message.body();
+        JsonObject requestBody = input.getJsonObject("requestBody");
+        JsonObject userJson = requestBody.getJsonObject("user");
+        JsonObject addressJson = requestBody.getJsonObject("address");
+
+        System.out.println("Inside UserWithAddress MEthod" + addressJson.toString());
+
+        // inserting the new user into the database
+        getConnection().compose(connection -> {
+
+            return connection.begin().onSuccess(txn -> {
+                Future<Integer> insertedUser = insertUser(connection, userJson);
+
+                insertedUser.compose(res -> {
+                    System.out.println("User_Id : "+res);
+                    return insertAddress(connection, addressJson, res);
+                }).onSuccess(res -> {
+                    txn.commit();
+                    promise.complete();
+                    JsonObject response = new JsonObject();
+                    response.put("User added with address : ----> ", requestBody);
+                    message.reply(response);
+                }).onFailure(err -> {
+                    promise.fail(err.getMessage());
+                    message.reply(err.getMessage());
+                }).eventually(con -> connection.close());
+            });
+
+        }).onSuccess(response -> {
+            JsonObject responseJson = new JsonObject()
+                    .put("User Added With Address : ", requestBody);
+
+            message.reply(responseJson);
+
+            // promise.complete(responseJson);
+        }).onFailure(error -> {
+            JsonObject errObj = new JsonObject();
+            errObj.put("error", error.getMessage());
+            message.reply(errObj);
+            // promise.fail(errObj.toString());
+        });
+        return promise.future();
+    }
+
+    private Future<Integer> insertUser(PgConnection connection, JsonObject userJson) {
+
+        System.out.println("Inside -----> insertUser");
+
+        Promise<Integer> promise = Promise.promise();
+        
+        String sql = "INSERT INTO user_info (name, email, gender, status, timestamp) " +
+                "VALUES ($1, $2, $3, $4, $5) RETURNING id";
+
+        connection.preparedQuery(sql).execute(Tuple.of(
+                userJson.getString("name"),
+                userJson.getString("email"),
+                userJson.getString("gender").toUpperCase(),
+                userJson.getString("status").toUpperCase(),
+                LocalDateTime.now().toLocalDate().toString()), ar -> {
+                    if (ar.succeeded()) {
+                        Row row = ar.result().iterator().next();
+                        Integer userId = row.getInteger("id");
+                        promise.complete(userId);
+                    } else {
+                        promise.fail(ar.cause());
+                    }
+                });
+
+        return promise.future();
+    }
+
+    private Future<Boolean> insertAddress(PgConnection connection, JsonObject addressJson, Integer userId) {
+
+        System.out.println("Inside ---------> insertAddress");
+        Promise<Boolean> promise = Promise.promise();
+        String sql = "INSERT INTO user_address (user_id, add_type, city, state) VALUES ($1, $2, $3, $4)";
+
+        connection.preparedQuery(sql).execute(Tuple.of(
+                userId,
+                addressJson.getString("add_type"),
+                addressJson.getString("city"),
+                addressJson.getString("state")), ar -> {
+                    if (ar.succeeded()) {
+                        promise.complete(true);
+                    } else {
+                        promise.fail(ar.cause());
+                    }
+                });
+
+        return promise.future();
+    }
+
+    // private void rollbackAndHandleError(PgConnection connection, String errorMessage, Message<?> message) {
+    //     ((Transaction) connection).rollback().onComplete(rollbackResult -> {
+    //         handleConnectionError(errorMessage, connection, message);
+    //     });
+    // }
+
+    // private void handleConnectionError(String errorMessage, PgConnection connection, Message<?> message) {
+    //     connection.close().onComplete(closeResult -> {
+    //         JsonObject errObj = new JsonObject();
+    //         errObj.put("error", errorMessage);
+    //         message.reply(errObj);
+    //     });
+    // }
+
 }
