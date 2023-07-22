@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.Message;
@@ -16,7 +17,6 @@ import io.vertx.pgclient.PgPool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
-import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 
 public class DatabaseVerticle extends AbstractVerticle {
@@ -455,7 +455,7 @@ public class DatabaseVerticle extends AbstractVerticle {
         JsonObject input = (JsonObject) message.body();
         JsonObject requestBody = input.getJsonObject("requestBody");
         JsonObject userJson = requestBody.getJsonObject("user");
-        JsonObject addressJson = requestBody.getJsonObject("address");
+        JsonArray addressJson = requestBody.getJsonArray("address");
 
         System.out.println("Inside UserWithAddress MEthod" + addressJson.toString());
 
@@ -466,33 +466,39 @@ public class DatabaseVerticle extends AbstractVerticle {
                 Future<Integer> insertedUser = insertUser(connection, userJson);
 
                 insertedUser.compose(res -> {
-                    System.out.println("User_Id : "+res);
+                    System.out.println("User_Id : " + res);
                     return insertAddress(connection, addressJson, res);
                 }).onSuccess(res -> {
-                    txn.commit();
-                    promise.complete();
-                    JsonObject response = new JsonObject();
-                    response.put("User added with address : ----> ", requestBody);
-                    message.reply(response);
+                    txn.commit().onSuccess(result -> {
+                        promise.complete();
+                        JsonObject response = new JsonObject();
+                        response.put("User added with address : ----> ", requestBody);
+                        message.reply(response);
+                    }).onFailure(error -> {
+                        message.reply(error.getMessage());
+                    });
+
                 }).onFailure(err -> {
+                    txn.rollback();
                     promise.fail(err.getMessage());
                     message.reply(err.getMessage());
                 }).eventually(con -> connection.close());
             });
 
-        }).onSuccess(response -> {
-            JsonObject responseJson = new JsonObject()
-                    .put("User Added With Address : ", requestBody);
-
-            message.reply(responseJson);
-
-            // promise.complete(responseJson);
-        }).onFailure(error -> {
-            JsonObject errObj = new JsonObject();
-            errObj.put("error", error.getMessage());
-            message.reply(errObj);
-            // promise.fail(errObj.toString());
         });
+        // .onSuccess(response -> {
+        // JsonObject responseJson = new JsonObject()
+        // .put("User Added With Address : ", requestBody);
+
+        // message.reply(responseJson);
+
+        // // promise.complete(responseJson);
+        // }).onFailure(error -> {
+        // JsonObject errObj = new JsonObject();
+        // errObj.put("error", error.getMessage());
+        // message.reply(errObj);
+        // // promise.fail(errObj.toString());
+        // });
         return promise.future();
     }
 
@@ -501,7 +507,7 @@ public class DatabaseVerticle extends AbstractVerticle {
         System.out.println("Inside -----> insertUser");
 
         Promise<Integer> promise = Promise.promise();
-        
+
         String sql = "INSERT INTO user_info (name, email, gender, status, timestamp) " +
                 "VALUES ($1, $2, $3, $4, $5) RETURNING id";
 
@@ -523,39 +529,64 @@ public class DatabaseVerticle extends AbstractVerticle {
         return promise.future();
     }
 
-    private Future<Boolean> insertAddress(PgConnection connection, JsonObject addressJson, Integer userId) {
+    private Future<Boolean> insertAddress(PgConnection connection, JsonArray addressJson, Integer userId) {
 
         System.out.println("Inside ---------> insertAddress");
         Promise<Boolean> promise = Promise.promise();
         String sql = "INSERT INTO user_address (user_id, add_type, city, state) VALUES ($1, $2, $3, $4)";
 
-        connection.preparedQuery(sql).execute(Tuple.of(
-                userId,
-                addressJson.getString("add_type"),
-                addressJson.getString("city"),
-                addressJson.getString("state")), ar -> {
-                    if (ar.succeeded()) {
-                        promise.complete(true);
-                    } else {
-                        promise.fail(ar.cause());
-                    }
-                });
+        // for (int i = 0; i < addressJson.size(); i++) {
+        //     System.out.println("---***---" +
+        //             addressJson.getJsonObject(i).getString("city"));
+        // }
+
+        // Create a list of futures to represent individual insert operations
+        List<Future> insertFutures = new ArrayList<>();
+
+        for (int i = 0; i < addressJson.size(); i++) {
+            Tuple addressData = Tuple.of(
+                    userId,
+                    addressJson.getJsonObject(i).getString("add_type"),
+                    addressJson.getJsonObject(i).getString("city"),
+                    addressJson.getJsonObject(i).getString("state"));
+
+            // Add the future representing the current insert operation
+            insertFutures.add(
+                    Future.future(fut -> connection.preparedQuery(sql).execute(addressData, ar -> {
+                        if (ar.succeeded()) {
+                            fut.complete();
+                        } else {
+                            fut.fail(ar.cause());
+                        }
+                    })));
+        }
+
+        // Use CompositeFuture to wait for all insert operations to complete
+        CompositeFuture.all(insertFutures).onComplete(ar -> {
+            if (ar.succeeded()) {
+                promise.complete(true);
+            } else {
+                promise.fail(ar.cause());
+            }
+        });
 
         return promise.future();
     }
 
-    // private void rollbackAndHandleError(PgConnection connection, String errorMessage, Message<?> message) {
-    //     ((Transaction) connection).rollback().onComplete(rollbackResult -> {
-    //         handleConnectionError(errorMessage, connection, message);
-    //     });
+    // private void rollbackAndHandleError(PgConnection connection, String
+    // errorMessage, Message<?> message) {
+    // ((Transaction) connection).rollback().onComplete(rollbackResult -> {
+    // handleConnectionError(errorMessage, connection, message);
+    // });
     // }
 
-    // private void handleConnectionError(String errorMessage, PgConnection connection, Message<?> message) {
-    //     connection.close().onComplete(closeResult -> {
-    //         JsonObject errObj = new JsonObject();
-    //         errObj.put("error", errorMessage);
-    //         message.reply(errObj);
-    //     });
+    // private void handleConnectionError(String errorMessage, PgConnection
+    // connection, Message<?> message) {
+    // connection.close().onComplete(closeResult -> {
+    // JsonObject errObj = new JsonObject();
+    // errObj.put("error", errorMessage);
+    // message.reply(errObj);
+    // });
     // }
 
 }
