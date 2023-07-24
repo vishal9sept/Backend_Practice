@@ -15,7 +15,7 @@ public class HttpVerticle extends AbstractVerticle {
     @Override
     public void start(Promise<Void> startPromise) {
 
-        // System.out.println("Inside Start Method of HttpVerticle : ");
+        System.out.println("Inside Start Method of HttpVerticle : ");
 
         HttpServer server = vertx.createHttpServer();
         Router router = Router.router(vertx);
@@ -37,6 +37,11 @@ public class HttpVerticle extends AbstractVerticle {
         router.post("/api/address").handler(BodyHandler.create())
                 .handler(routingContext -> myEventBus(routingContext, eventBus, "postAddress"));
 
+        router.get("/api/getAddress").handler(routingContext -> myEventBus(routingContext, eventBus, "getAddress"));
+
+        router.get("/api/userWithAddByID")
+                .handler(routingContext -> myEventBus(routingContext, eventBus, "userWithAddByID"));
+
         router.post("/api/userWithAdd").handler(BodyHandler.create())
                 .handler(routingContext -> myEventBus(routingContext, eventBus, "postUserWithAddress"));
 
@@ -54,19 +59,19 @@ public class HttpVerticle extends AbstractVerticle {
 
         System.out.println("*********Routing Contest***********" + routingContext.queryParams());
         JsonObject userJson;
-        if (routingContext.body() == null) {
+        if (routingContext.body().asJsonObject() == null) {
 
             String type = types;
 
             userJson = new JsonObject();
-            JsonObject requestBodyJson = new JsonObject();
-
             userJson.put("type", type);
-            userJson.put("inputJson", requestBodyJson);
-            // System.out.println(routingContext.queryParam("name"));
-            userJson.put("name", routingContext.queryParam("name"));
-            userJson.put("gender", routingContext.queryParam("gender"));
-            userJson.put("status", routingContext.queryParam("status"));
+            System.out.println("User_Id : "+routingContext.queryParam("id").get(0));
+
+            userJson.put("id", routingContext.queryParam("id").get(0));
+            // ---For filtering User data
+            // userJson.put("name", routingContext.queryParam("name"));
+            // userJson.put("gender", routingContext.queryParam("gender"));
+            // userJson.put("status", routingContext.queryParam("status"));
 
         } else {
 
@@ -78,7 +83,7 @@ public class HttpVerticle extends AbstractVerticle {
             try {
                 userJson = new JsonObject();
 
-                userJson.put("type", type) ;
+                userJson.put("type", type);
                 userJson.put("requestBody", requestBody);
 
             } catch (DecodeException e) {
@@ -89,7 +94,7 @@ public class HttpVerticle extends AbstractVerticle {
             }
         }
 
-        eventBus.request("eventBus.add", userJson, reply -> {           
+        eventBus.request("eventBus.add", userJson, reply -> {
             if (reply.succeeded()) {
                 System.out.println("Inside EventBus Reply Succeeded : ");
                 JsonObject jObject = (JsonObject) reply.result().body();

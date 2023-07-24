@@ -81,11 +81,14 @@ public class DatabaseVerticle extends AbstractVerticle {
                 case "postUserWithAddress":
                     createUserWithAddress(message);
                     break;
+                case "userWithAddByID":
+                    getUserAddressByUserID(message);
+                    break;
             }
         }
     }
 
-    // Find user by ID
+    // Find user by ID for updating User
     private Future<Boolean> findUserById(Integer id) {
 
         Promise<Boolean> promise = Promise.promise();
@@ -387,17 +390,15 @@ public class DatabaseVerticle extends AbstractVerticle {
 
     }
 
+    // Get Users and Their addresses
     public <T> void getAddressByUser(Message<T> message) {
 
         System.out.println("Inside GetAddress Method ");
 
-        JsonObject input = (JsonObject) message.body();
-        // JsonObject userJson = input.getJsonObject("inputJson");
-        // String nameQuery = input.getString("name");
-
         System.out.println("Message : " + message.body());
 
-        StringBuilder queryBuilder = new StringBuilder("SELECT * FROM user_info ORDER By id");
+        StringBuilder queryBuilder = new StringBuilder(
+                "SELECT * FROM user_info U LEFT JOIN user_address ON user_address.user_id = U.id ORDER BY U.id");
 
         System.out.println(queryBuilder.toString());
 
@@ -418,8 +419,10 @@ public class DatabaseVerticle extends AbstractVerticle {
             return promise.future();
         }).onSuccess(rows -> {
             List<JsonObject> usersList = new ArrayList<>();
-
+            Integer prevUserId = 0;
             for (Row row : rows) {
+
+                System.out.println("Rows :::--->" + row.deepToString());
                 Integer id = row.getInteger("id");
                 String name = row.getString("name");
                 String email = row.getString("email");
@@ -435,11 +438,100 @@ public class DatabaseVerticle extends AbstractVerticle {
                         .put("status", status)
                         .put("timestamp", timestamp);
 
-                usersList.add(userJson);
+                // ------For Address
+                JsonArray addressesArray = new JsonArray();
+                if (id == prevUserId) {
+                    for (int i = 0; i < 2; i++) {
+                        JsonObject address = new JsonObject();
+                        address.put("address_id", row.getInteger("address_id"));
+                        address.put("user_id", row.getInteger("user_id"));
+                        address.put("add_type", row.getString("add_type"));
+                        address.put("city", row.getString("city"));
+                        address.put("state", row.getString("state"));
+                        addressesArray.add(address);
+                    }
+                } else {
+                    JsonObject address = new JsonObject();
+                    address.put("address_id", row.getInteger("address_id"));
+                    address.put("user_id", row.getInteger("user_id"));
+                    address.put("add_type", row.getString("add_type"));
+                    address.put("city", row.getString("city"));
+                    address.put("state", row.getString("state"));
+                    addressesArray.add(address);
+                }
+                JsonObject response = new JsonObject();
+                response.put("user", userJson);
+                response.put("address", addressesArray);
+
+                usersList.add(response);
+                prevUserId = id; // Previous User ID
             }
 
             JsonObject responseJson = new JsonObject().put("users", usersList);
             message.reply(responseJson);
+        }).onFailure(error -> {
+            JsonObject errObj = new JsonObject().put("error", error.getMessage());
+            message.reply(errObj);
+        });
+
+    }
+
+    // Get User and Address by User_ID.
+    public <T> void getUserAddressByUserID(Message<T> message) {
+
+        System.out.println("Inside GetUserAddressBy UserId Method : ");
+
+        JsonObject input = (JsonObject) message.body();
+        String userId = input.getString("id");
+
+        System.out.println("userId : " + userId);
+
+        String userQuery = "SELECT * from user_info WHERE id=" + userId;
+        // String addQuery = "SELECT * FROM user_address where user_id=" + userId;
+
+        getConnection().compose(connection -> {
+
+            Promise<JsonObject> promise = Promise.promise();
+
+            connection.query(userQuery).execute(res -> {
+
+                if (res.succeeded()) {
+                    RowSet<Row> rows = res.result();
+                    // System.out.println(rows.iterator().next().deepToString());
+                    Row row = rows.iterator().next();
+
+                    JsonObject user = new JsonObject();
+                    user.put("id", row.getInteger("id"));
+                    user.put("name", row.getString("name"));
+                    user.put("email", row.getString("email"));
+                    user.put("gender", row.getString("gender"));
+                    user.put("status", row.getString("status"));
+                    user.put("timestamp", row.getString("timestamp"));
+                    
+                    
+                    JsonObject response = new JsonObject();
+                    response.put("user", user);
+                    Future<JsonArray> js = getUsersAddresses(connection, userId);
+                    js.onComplete(address -> {
+                        System.out.println("API adress : " + address);
+                        response.put("address", address.result());
+                        // message.reply("");
+                        promise.complete(response);
+                    });
+                } else {
+                    promise.fail(res.cause());
+                }
+                connection.close(); // Closed the DB connection
+            });
+
+            return promise.future();
+        }).onSuccess(row -> {
+
+            // List<JsonObject> usersList = new ArrayList<>();
+            // System.out.println("Rows :::--->" + row);
+            // JsonObject responseJson = new JsonObject().put("users", usersList);
+            message.reply(row);
+
         }).onFailure(error -> {
             JsonObject errObj = new JsonObject().put("error", error.getMessage());
             message.reply(errObj);
@@ -536,8 +628,8 @@ public class DatabaseVerticle extends AbstractVerticle {
         String sql = "INSERT INTO user_address (user_id, add_type, city, state) VALUES ($1, $2, $3, $4)";
 
         // for (int i = 0; i < addressJson.size(); i++) {
-        //     System.out.println("---***---" +
-        //             addressJson.getJsonObject(i).getString("city"));
+        // System.out.println("---***---" +
+        // addressJson.getJsonObject(i).getString("city"));
         // }
 
         // Create a list of futures to represent individual insert operations
@@ -573,20 +665,30 @@ public class DatabaseVerticle extends AbstractVerticle {
         return promise.future();
     }
 
-    // private void rollbackAndHandleError(PgConnection connection, String
-    // errorMessage, Message<?> message) {
-    // ((Transaction) connection).rollback().onComplete(rollbackResult -> {
-    // handleConnectionError(errorMessage, connection, message);
-    // });
-    // }
+    private Future<JsonArray> getUsersAddresses(PgConnection connection, String userId) {
+        Promise<JsonArray> promise = Promise.promise();
 
-    // private void handleConnectionError(String errorMessage, PgConnection
-    // connection, Message<?> message) {
-    // connection.close().onComplete(closeResult -> {
-    // JsonObject errObj = new JsonObject();
-    // errObj.put("error", errorMessage);
-    // message.reply(errObj);
-    // });
-    // }
+        String sql = "SELECT * FROM user_address WHERE user_id =" + userId;
+
+        connection.query(sql).execute(ar -> {
+            if (ar.succeeded()) {
+                JsonArray addressesArray = new JsonArray();
+                ar.result().forEach(row -> {
+                    JsonObject address = new JsonObject();
+                    address.put("address_id", row.getInteger("address_id"));
+                    address.put("user_id", row.getInteger("user_id"));
+                    address.put("add_type", row.getString("add_type"));
+                    address.put("city", row.getString("city"));
+                    address.put("state", row.getString("state"));
+                    addressesArray.add(address);
+                });
+                promise.complete(addressesArray);
+            } else {
+                promise.fail(ar.cause());
+            }
+        });
+
+        return promise.future();
+    }
 
 }
