@@ -390,7 +390,7 @@ public class DatabaseVerticle extends AbstractVerticle {
 
     }
 
-    // Get Users and Their addresses
+    // Get All Users and Their addresses
     public <T> void getAddressByUser(Message<T> message) {
 
         System.out.println("Inside GetAddress Method ");
@@ -476,7 +476,7 @@ public class DatabaseVerticle extends AbstractVerticle {
 
     }
 
-    // Get User and Address by User_ID.
+    // Get a User and his Addresses by User_ID.
     public <T> void getUserAddressByUserID(Message<T> message) {
 
         System.out.println("Inside GetUserAddressBy UserId Method : ");
@@ -509,14 +509,14 @@ public class DatabaseVerticle extends AbstractVerticle {
                     user.put("timestamp", row.getString("timestamp"));
                     
                     
-                    JsonObject response = new JsonObject();
-                    response.put("user", user);
+                    // JsonObject response = new JsonObject();
+                    // response.put("user", user);
                     Future<JsonArray> js = getUsersAddresses(connection, userId);
                     js.onComplete(address -> {
                         System.out.println("API adress : " + address);
-                        response.put("address", address.result());
+                        user.put("address", address.result());
                         // message.reply("");
-                        promise.complete(response);
+                        promise.complete(user);
                     });
                 } else {
                     promise.fail(res.cause());
@@ -540,14 +540,15 @@ public class DatabaseVerticle extends AbstractVerticle {
     }
 
     // -----------------------------------------------------------------------------------------
-
+    //Create User With Address array
     public <T> Future<JsonObject> createUserWithAddress(Message<T> message) {
         Promise<JsonObject> promise = Promise.promise();
 
         JsonObject input = (JsonObject) message.body();
         JsonObject requestBody = input.getJsonObject("requestBody");
-        JsonObject userJson = requestBody.getJsonObject("user");
-        JsonArray addressJson = requestBody.getJsonArray("address");
+        JsonObject userJson = requestBody;
+        // JsonArray addressJson = requestBody.getJsonArray("address");
+        JsonArray addressJson = userJson.getJsonArray("address");
 
         System.out.println("Inside UserWithAddress MEthod" + addressJson.toString());
 
