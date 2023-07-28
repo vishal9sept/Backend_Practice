@@ -65,9 +65,11 @@ public class HttpVerticle extends AbstractVerticle {
 
             userJson = new JsonObject();
             userJson.put("type", type);
-            System.out.println("User_Id : "+routingContext.queryParam("id").get(0));
+            // System.out.println("User_Id : "+routingContext.queryParam("id").get(0));
 
-            userJson.put("id", routingContext.queryParam("id").get(0));
+            if(routingContext.queryParams().size() > 0){
+                userJson.put("id", routingContext.queryParam("id").get(0));
+            }
             // ---For filtering User data
             // userJson.put("name", routingContext.queryParam("name"));
             // userJson.put("gender", routingContext.queryParam("gender"));

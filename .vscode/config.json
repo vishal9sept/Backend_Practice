@@ -1,0 +1,11 @@
+{
+    "amqp": {
+        "host": "localhost",
+        "port": 5672,
+        "username": "amqp_user",
+        "password": "amqp_pw",
+        "requestQname": "TENANT:txn_request",
+        "eventQname": "TENANT:event_publish",
+        "batchQname": "TENANT:batch_commands"
+    }
+}

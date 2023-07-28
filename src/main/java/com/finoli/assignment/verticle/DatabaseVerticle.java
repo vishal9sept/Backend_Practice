@@ -8,7 +8,10 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.Message;
+import io.vertx.core.impl.logging.Logger;
+import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.pgclient.PgConnectOptions;
@@ -21,7 +24,10 @@ import io.vertx.sqlclient.Tuple;
 
 public class DatabaseVerticle extends AbstractVerticle {
 
+    private final Logger logger = LoggerFactory.getLogger(this.getClass().getName());
+
     private PgPool pool;
+    private EventBus rabbitMQBus;
 
     @Override
     public void start(Promise<Void> startPromise) throws Exception {
@@ -41,6 +47,8 @@ public class DatabaseVerticle extends AbstractVerticle {
         pool = PgPool.pool(vertx, connectOptions, poolOptions);
 
         vertx.eventBus().consumer("eventBus.add", this::eventBusHandler);
+
+        rabbitMQBus = vertx.eventBus();
 
         startPromise.complete();
 
@@ -227,6 +235,8 @@ public class DatabaseVerticle extends AbstractVerticle {
             }
 
             JsonObject responseJson = new JsonObject().put("users", usersList);
+            rabbitMQBus.publish("rabbitMQ", responseJson);
+            logger.debug("Message published from -> getAllUsers() : " + responseJson.encodePrettily());
             message.reply(responseJson);
         }).onFailure(error -> {
             JsonObject errObj = new JsonObject().put("error", error.getMessage());
@@ -280,6 +290,9 @@ public class DatabaseVerticle extends AbstractVerticle {
                 }).onSuccess(response -> {
                     JsonObject responseJson = new JsonObject()
                             .put("User Added Successfully with Name : ", userJson.getString("name"));
+
+                    rabbitMQBus.publish("rabbitMQ", responseJson);
+                    logger.debug("Message published from -> getAllUsers() : " + responseJson.encodePrettily());
                     message.reply(responseJson);
                 }).onFailure(error -> {
                     JsonObject errObj = new JsonObject();
@@ -298,6 +311,8 @@ public class DatabaseVerticle extends AbstractVerticle {
         JsonObject input = (JsonObject) message.body();
         JsonObject userJson = input.getJsonObject("requestBody");
 
+        System.out.println("////****\\\\"+ userJson);
+
         // Extract the userId from the request body
         Integer Id = userJson.getInteger("id");
 
@@ -308,6 +323,7 @@ public class DatabaseVerticle extends AbstractVerticle {
                 // User exists, proceed with the update
                 Tuple userTuple = Tuple.of(
                         userJson.getString("name"),
+                        userJson.getString("email"),
                         userJson.getString("gender").toUpperCase(),
                         userJson.getString("status").toUpperCase(),
                         LocalDateTime.now().toLocalDate().toString(),
@@ -317,7 +333,7 @@ public class DatabaseVerticle extends AbstractVerticle {
                 return getConnection().compose(connection -> {
                     Promise<Void> promise = Promise.promise();
 
-                    String sql = "UPDATE user_info SET name = $1, gender = $2, status = $3, timestamp = $4 WHERE id = $5";
+                    String sql = "UPDATE user_info SET name = $1, email = $2, gender = $3, status = $4, timestamp = $5 WHERE id = $6";
 
                     connection.preparedQuery(sql).execute(userTuple, res -> {
                         if (res.succeeded()) {
@@ -333,6 +349,9 @@ public class DatabaseVerticle extends AbstractVerticle {
                 }).onSuccess(response -> {
                     JsonObject responseJson = new JsonObject()
                             .put("User Updated Successfully with userId: ", Id);
+
+                    rabbitMQBus.publish("rabbitMQ", responseJson);
+                    logger.debug("Message published from -> updateUser() : " + responseJson.encodePrettily());
                     message.reply(responseJson);
                 }).onFailure(error -> {
                     JsonObject errObj = new JsonObject();
@@ -468,6 +487,7 @@ public class DatabaseVerticle extends AbstractVerticle {
             }
 
             JsonObject responseJson = new JsonObject().put("users", usersList);
+            rabbitMQBus.publish("rabbitMQ", responseJson);
             message.reply(responseJson);
         }).onFailure(error -> {
             JsonObject errObj = new JsonObject().put("error", error.getMessage());
@@ -507,15 +527,16 @@ public class DatabaseVerticle extends AbstractVerticle {
                     user.put("gender", row.getString("gender"));
                     user.put("status", row.getString("status"));
                     user.put("timestamp", row.getString("timestamp"));
-                    
-                    
+
                     // JsonObject response = new JsonObject();
                     // response.put("user", user);
-                    Future<JsonArray> js = getUsersAddresses(connection, userId);
-                    js.onComplete(address -> {
+                    Future<JsonArray> addResponse = getUsersAddresses(connection, userId);
+                    addResponse.onComplete(address -> {
                         System.out.println("API adress : " + address);
                         user.put("address", address.result());
                         // message.reply("");
+                        rabbitMQBus.publish("rabbitMQ", user);
+                        logger.debug("Message published from -> getUserAddressByUserID() : " + user.encodePrettily());
                         promise.complete(user);
                     });
                 } else {
@@ -540,7 +561,7 @@ public class DatabaseVerticle extends AbstractVerticle {
     }
 
     // -----------------------------------------------------------------------------------------
-    //Create User With Address array
+    // Create User With Address array
     public <T> Future<JsonObject> createUserWithAddress(Message<T> message) {
         Promise<JsonObject> promise = Promise.promise();
 
@@ -566,6 +587,8 @@ public class DatabaseVerticle extends AbstractVerticle {
                         promise.complete();
                         JsonObject response = new JsonObject();
                         response.put("User added with address : ----> ", requestBody);
+                        rabbitMQBus.publish("rabbitMQ", response);
+
                         message.reply(response);
                     }).onFailure(error -> {
                         message.reply(error.getMessage());
